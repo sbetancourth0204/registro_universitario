@@ -1,0 +1,356 @@
+==============================================================
+  ARCHITECTURE DECISION RECORDS (ADR)
+  Sistema CRUD - Universidad UTEDE
+  Formato: MADR (Markdown Architectural Decision Records)
+           adaptado a texto plano
+  Fecha:   2026-03-28
+==============================================================
+
+
+--------------------------------------------------------------
+ADR-001: Arquitectura MVC procedimental sin framework
+--------------------------------------------------------------
+Estado:    ACEPTADO
+Fecha:     2026-03-28
+Autores:   Equipo de desarrollo UTEDE
+
+Contexto:
+    Se requiere una aplicacion web PHP para gestionar
+    estudiantes de la universidad. El equipo tiene
+    conocimiento basico de PHP y el entorno de despliegue
+    es un servidor compartido con Apache + PHP + MySQL
+    (pila LAMP tipica en instituciones educativas).
+
+Decision:
+    Implementar un patron MVC simplificado de forma
+    procedimental, sin usar frameworks como Laravel,
+    Symfony o CodeIgniter. La estructura es:
+    - Controladores: archivos PHP en la raiz
+    - Modelos: clases en /models con acceso PDO
+    - Vistas: formularios HTML en /forms incluidos con
+      require_once desde los controladores
+
+Alternativas consideradas:
+    a) Laravel: framework completo con ORM Eloquent,
+       Blade templates, artisan CLI.
+       Descartado: curva de aprendizaje alta, requiere
+       Composer, inadecuado para servidor compartido basico.
+
+    b) CodeIgniter 4: framework ligero para PHP.
+       Descartado: agrega dependencias externas innecesarias
+       para el alcance del proyecto.
+
+    c) PHP puro sin estructura: todo en un solo archivo.
+       Descartado: no hay separacion de responsabilidades,
+       imposible de mantener al crecer.
+
+Consecuencias positivas:
+    + Sin dependencias externas, despliegue simple.
+    + Facil de entender para estudiantes de PHP.
+    + Control total sobre cada linea de codigo.
+    + Funciona en cualquier hosting con PHP 8.x.
+
+Consecuencias negativas:
+    - Sin inyeccion de dependencias formal.
+    - Sin ORM: las consultas SQL son manuales.
+    - Escalabilidad limitada; si el sistema crece
+      significativamente habra que migrar a un framework.
+    - Sin sistema de routing: las URLs son los nombres
+      de los archivos PHP.
+
+
+--------------------------------------------------------------
+ADR-002: Uso de PDO con sentencias preparadas como capa de
+         acceso a datos
+--------------------------------------------------------------
+Estado:    ACEPTADO
+Fecha:     2026-03-28
+
+Contexto:
+    La aplicacion necesita interactuar con una base de datos
+    MySQL. Se debe proteger contra inyeccion SQL y proveer
+    una API de acceso a datos mantenible.
+
+Decision:
+    Usar la extension PDO (PHP Data Objects) con:
+    - PDO::ATTR_EMULATE_PREPARES = false (sentencias reales)
+    - PDO::ERRMODE_EXCEPTION (excepciones en errores)
+    - PDO::FETCH_ASSOC (arrays asociativos)
+    - Parametros nombrados (:param) en todos los queries
+
+Alternativas consideradas:
+    a) MySQLi: extension alternativa, solo para MySQL.
+       Descartado: PDO es independiente del motor de BD
+       y su API de prepared statements es mas limpia.
+
+    b) MySQLi con consultas directas sin parametrizar.
+       Descartado: vulnerable a inyeccion SQL.
+
+    c) ORM como Doctrine o Eloquent standalone.
+       Descartado: agrega complejidad y dependencias para
+       el alcance del proyecto.
+
+Consecuencias positivas:
+    + Proteccion nativa contra inyeccion SQL.
+    + Si se necesita cambiar el motor de BD (p.ej. a
+      PostgreSQL), el cambio es minimo (solo el DSN).
+    + Las excepciones PDOException facilitan el manejo
+      de errores con try/catch.
+
+Consecuencias negativas:
+    - Mas verboso que un ORM para operaciones CRUD simples.
+    - El desarrollador debe escribir SQL manualmente,
+      lo que requiere conocimiento de SQL.
+
+
+--------------------------------------------------------------
+ADR-003: Hashing de contrasenas con bcrypt (PASSWORD_BCRYPT)
+         y factor de costo 12
+--------------------------------------------------------------
+Estado:    ACEPTADO
+Fecha:     2026-03-28
+
+Contexto:
+    Las contrasenas de los usuarios deben almacenarse de forma
+    segura en la base de datos. Ante una brecha de datos, las
+    contrasenas no deben poder recuperarse en texto plano.
+
+Decision:
+    Usar password_hash($clave, PASSWORD_BCRYPT, ['cost' => 12])
+    para almacenar y password_verify() para comparar.
+    El campo clavehash en la tabla usuarios es VARCHAR(255)
+    para soportar el hash completo de bcrypt.
+
+Alternativas consideradas:
+    a) MD5 o SHA1 sin salt.
+       Descartado: algoritmos rotos, vulnerables a rainbow
+       tables y ataques de fuerza bruta acelerada con GPU.
+
+    b) SHA-256 con salt manual.
+       Descartado: SHA-256 es rapido; un atacante con GPU
+       puede calcular millones de hashes por segundo.
+       Bcrypt es deliberadamente lento (adaptable).
+
+    c) Argon2id (PASSWORD_ARGON2ID).
+       Alternativa valida y mas moderna. Requiere PHP 7.3+
+       con libsodium. Podria adoptarse en una version futura.
+       Por compatibilidad con entornos LAMP genericos se
+       prefiere bcrypt que es universal en PHP.
+
+    d) Cost factor 10 (valor por defecto de PHP).
+       Descartado: cost 12 provee mayor resistencia a fuerza
+       bruta con un tiempo de hash aceptable (~300ms en
+       hardware moderno, tolerable en login).
+
+Consecuencias positivas:
+    + Resistencia a ataques de diccionario y fuerza bruta.
+    + El factor de costo es configurable: se puede aumentar
+      en el futuro sin romper hashes existentes
+      (password_needs_rehash()).
+    + API nativa de PHP: sin dependencias externas.
+
+Consecuencias negativas:
+    - Tiempo de hash ~300ms por operacion de registro/login.
+      Aceptable para login interactivo, inaceptable para
+      importacion masiva de usuarios.
+    - Bcrypt trunca contrasenas a 72 bytes. Contrasenas mas
+      largas no agregan entropia. Documentar este limite.
+
+
+--------------------------------------------------------------
+ADR-004: Separacion de sanitizacion, validacion y presentacion
+         en archivos independientes
+--------------------------------------------------------------
+Estado:    ACEPTADO
+Fecha:     2026-03-28
+
+Contexto:
+    Para mantener el codigo organizado y facilitar reutilizacion,
+    las responsabilidades de manejo de entrada deben estar
+    claramente separadas.
+
+Decision:
+    - includes/sanitizar.php: funciones de limpieza de entradas
+      (strip_tags, htmlspecialchars, FILTER_SANITIZE_*)
+    - includes/validar.php: funciones de reglas de negocio
+      (requerido, longitud, formato, contrasena)
+    - forms/*.php: solo HTML de formularios, sin logica PHP
+    Los controladores coordinan el flujo:
+      sanitizar -> validar -> operar en BD -> redirigir/mostrar
+
+Alternativas consideradas:
+    a) Mezclar sanitizacion, validacion y HTML en un solo archivo.
+       Descartado: viola el principio de responsabilidad unica,
+       dificulta pruebas y mantenimiento.
+
+    b) Usar una biblioteca de validacion (Respect\Validation,
+       Symfony Validator).
+       Descartado: agrega dependencias para funciones que
+       se implementan facilmente de forma nativa en PHP.
+
+Consecuencias positivas:
+    + Cada archivo tiene una sola responsabilidad.
+    + Las funciones de validacion son reutilizables
+      en cualquier controlador.
+    + Los formularios son HTML puro: facilita revision
+      por disenadores o personal no tecnico.
+
+Consecuencias negativas:
+    - La sanitizacion con htmlspecialchars antes de guardar
+      en BD genera doble codificacion (ver CODE REVIEW 3.4).
+      En una version futura se debe separar la sanitizacion
+      de almacenamiento de la codificacion de salida HTML.
+
+
+--------------------------------------------------------------
+ADR-005: Gestion de sesion con variables $_SESSION nativas
+--------------------------------------------------------------
+Estado:    ACEPTADO
+Fecha:     2026-03-28
+
+Contexto:
+    La aplicacion requiere autenticacion con estado entre
+    requests HTTP (HTTP es stateless). Se debe mantener la
+    identidad del usuario autenticado entre paginas.
+
+Decision:
+    Usar el sistema de sesiones nativo de PHP ($_SESSION)
+    con las siguientes medidas de seguridad:
+    - session_regenerate_id(true) al iniciar sesion
+    - Limpieza completa en logout (SESSION=[], destroy, cookie)
+    - verificarSesion() en cada pagina protegida
+
+Alternativas consideradas:
+    a) JWT (JSON Web Tokens) sin estado.
+       Descartado: requiere logica adicional de firma,
+       verificacion y renovacion de tokens. Adecuado para
+       APIs REST, no para aplicaciones web tradicionales PHP.
+
+    b) Cookies personalizadas sin sesion.
+       Descartado: requiere implementar manualmente la
+       seguridad que PHP ya provee en $_SESSION.
+
+    c) Autenticacion basada en base de datos (token en BD).
+       Descartado: mayor complejidad sin beneficio adicional
+       para el alcance del proyecto.
+
+Consecuencias positivas:
+    + Mecanismo maduro y bien probado en PHP.
+    + Sin dependencias externas.
+    + session_regenerate_id() previene session fixation.
+    + Logout completo invalida la sesion de inmediato.
+
+Consecuencias negativas:
+    - Las sesiones se almacenan en archivos del servidor
+      por defecto. En entornos de multiples servidores
+      (balanceo de carga) se necesita almacenamiento
+      compartido (Redis, Memcached, BD).
+    - Sin mecanismo de expiracion configurable por inactividad
+      mas alla del gc de PHP (mejora pendiente).
+    - Sin proteccion CSRF complementaria (ADR pendiente).
+
+
+--------------------------------------------------------------
+ADR-006: Base de datos MySQL con colacion utf8mb4_unicode_ci
+--------------------------------------------------------------
+Estado:    ACEPTADO
+Fecha:     2026-03-28
+
+Contexto:
+    La base de datos debe almacenar nombres y textos en espanol
+    con tildes, enyes y caracteres especiales. Debe soportar
+    el conjunto completo de caracteres Unicode.
+
+Decision:
+    Usar CHARACTER SET utf8mb4 y COLLATE utf8mb4_unicode_ci
+    en la base de datos y todas las tablas. El DSN de PDO
+    incluye charset=utf8mb4 para asegurar la codificacion
+    en la conexion.
+
+Alternativas consideradas:
+    a) utf8 (utf8mb3 en MySQL 8):
+       Descartado: solo soporta hasta 3 bytes por caracter,
+       excluyendo emojis y algunos caracteres Unicode poco
+       frecuentes. utf8mb4 es el estandar actual.
+
+    b) latin1:
+       Descartado: no soporta caracteres fuera del rango
+       ISO-8859-1. Incompatible con textos Unicode.
+
+Consecuencias positivas:
+    + Soporte completo de Unicode incluyendo emojis.
+    + Compatibilidad con nombres en cualquier idioma.
+    + unicode_ci proporciona comparacion correcta para
+      caracteres acentuados en busquedas y ordenamiento.
+
+Consecuencias negativas:
+    - Algunos indices pueden ser hasta un 33% mas grandes
+      que con utf8mb3.
+    - Requiere que el servidor MySQL sea 5.5.3+ (universalmente
+      disponible hoy).
+
+
+--------------------------------------------------------------
+ADR-007: Mensajes de retroalimentacion via parametro GET
+--------------------------------------------------------------
+Estado:    ACEPTADO (con observacion de mejora)
+Fecha:     2026-03-28
+
+Contexto:
+    Tras una operacion exitosa (registrar, actualizar),
+    el controlador redirige al usuario al listado y debe
+    mostrar un mensaje de exito.
+
+Decision:
+    Pasar el tipo de mensaje como parametro GET en la URL:
+        header('Location: index.php?mensaje=registrado');
+    En index.php se compara con === para evitar inyeccion.
+
+Observacion:
+    Esta decision es funcional pero tiene limitaciones
+    (ver CODE REVIEW 3.7). Se recomienda migrar al patron
+    PRG con mensajes flash almacenados en sesion:
+        $_SESSION['flash'] = 'Mensaje de exito.';
+        header('Location: index.php');
+    Esto elimina el mensaje de la URL y evita que se
+    muestre de nuevo al recargar la pagina.
+
+Estado de la mejora: PENDIENTE para proxima iteracion.
+
+Consecuencias actuales:
+    + Simple de implementar.
+    - El mensaje persiste en la URL (bookmark, historial).
+    - Un usuario puede manipular el valor del parametro
+      (aunque los valores aceptados estan restringidos).
+    - Al recargar index.php el mensaje vuelve a aparecer.
+
+
+==============================================================
+  RESUMEN DE DECISIONES
+==============================================================
+
+  ADR     Titulo                                    Estado
+  ------  ----------------------------------------  ----------
+  ADR-001 Arquitectura MVC procedimental            ACEPTADO
+  ADR-002 PDO con sentencias preparadas             ACEPTADO
+  ADR-003 Bcrypt con cost=12 para contrasenas       ACEPTADO
+  ADR-004 Separacion sanitizar/validar/forms        ACEPTADO
+  ADR-005 Sesiones nativas PHP                      ACEPTADO
+  ADR-006 MySQL utf8mb4_unicode_ci                  ACEPTADO
+  ADR-007 Mensajes GET (pendiente mejora a sesion)  ACEPTADO*
+
+  (*) Aceptado con recomendacion de refactorizacion.
+
+==============================================================
+  PROXIMAS DECISIONES A DOCUMENTAR (BACKLOG ADR)
+==============================================================
+
+  ADR-008 Implementacion de tokens CSRF
+  ADR-009 Proteccion contra fuerza bruta en login
+  ADR-010 Separacion de entornos (dev/staging/prod)
+  ADR-011 Estrategia de paginacion para listados
+  ADR-012 Migracion a mensajes flash via sesion
+
+==============================================================
+  FIN DEL DOCUMENTO ADR
+==============================================================
