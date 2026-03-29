@@ -1,0 +1,59 @@
+@startuml C4_Contenedor_UTEDE
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+LAYOUT_WITH_LEGEND()
+
+title Diagrama C4 - Nivel 2: Contenedores del Sistema\nSistema CRUD UTEDE - Gestion de Estudiantes
+
+' =============================================
+' PERSONA EXTERNA
+' =============================================
+Person(usuario_admin, "Usuario Administrativo", "Personal autorizado de la universidad.")
+
+' =============================================
+' SISTEMA: CRUD UTEDE
+' =============================================
+System_Boundary(crud_utede, "Sistema CRUD UTEDE") {
+
+    Container(web_app, "Aplicacion Web PHP", "PHP 8.x / Apache / Nginx", "Entrega paginas HTML dinamicas. Contiene la logica de presentacion, validacion, sanitizacion y coordinacion de operaciones CRUD. Punto de entrada unico via HTTP.")
+
+    ContainerDb(base_datos, "Base de Datos Relacional", "MySQL / MariaDB\nutf8mb4_unicode_ci", "Almacena los datos de usuarios del sistema (con hash bcrypt) y de los estudiantes registrados. Dos tablas: usuarios y estudiantes.")
+
+    Container(sesion_store, "Almacenamiento de Sesiones", "PHP Session Files\n(sistema de archivos del servidor)", "Almacena los datos de sesion activa de cada usuario autenticado: id_usuario, nombre de usuario. Gestionado por PHP de forma nativa.")
+}
+
+' =============================================
+' RELACIONES EXTERNAS
+' =============================================
+Rel(usuario_admin, web_app, "Interactua via formularios HTML", "HTTP/HTTPS\nGET / POST")
+
+' =============================================
+' RELACIONES INTERNAS
+' =============================================
+Rel(web_app, base_datos,    "Lee y escribe datos de estudiantes y usuarios", "PDO / SQL\nSentencias preparadas")
+Rel(web_app, sesion_store,  "Lee y escribe datos de sesion activa", "PHP session_start()\narchivos en disco")
+
+Rel_Back(web_app, usuario_admin, "Responde con paginas HTML renderizadas", "HTTP/HTTPS")
+
+' =============================================
+' NOTAS
+' =============================================
+note bottom of web_app
+  Estructura interna de la aplicacion web:
+  /config    -> Configuracion de conexion PDO
+  /includes  -> Auth, Sanitizar, Validar
+  /models    -> UsuarioModel, EstudianteModel
+  /forms     -> Formularios HTML parciales
+  *.php      -> Controladores (login, index,
+                registrar, editar, logout)
+end note
+
+note bottom of base_datos
+  Tablas:
+  - usuarios (id_usuario, identificacion,
+    apellidos, nombres, usuario, clavehash)
+  - estudiantes (id_estudiante, identificacion,
+    apellidos, nombre, email)
+end note
+
+@enduml

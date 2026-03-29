@@ -1,0 +1,46 @@
+@startuml C4_Contexto_UTEDE
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Context.puml
+
+LAYOUT_WITH_LEGEND()
+
+title Diagrama C4 - Nivel 1: Contexto del Sistema\nSistema CRUD UTEDE - Gestion de Estudiantes
+
+' =============================================
+' PERSONAS
+' =============================================
+Person(usuario_admin, "Usuario Administrativo", "Personal de la universidad autorizado para gestionar estudiantes. Se autentica con usuario y contrasena.")
+
+' =============================================
+' SISTEMA PRINCIPAL
+' =============================================
+System(crud_utede, "Sistema CRUD UTEDE", "Aplicacion web PHP que permite gestionar el registro, consulta y edicion de estudiantes de la universidad. Incluye modulo de autenticacion de usuarios.")
+
+' =============================================
+' SISTEMAS EXTERNOS
+' =============================================
+System_Ext(servidor_email, "Servidor de Correo", "Sistema externo de correo electronico de la universidad. El email del estudiante se almacena como referencia de contacto.")
+
+System_Ext(browser, "Navegador Web", "Cualquier navegador moderno (Chrome, Firefox, Edge, Safari) desde donde el usuario accede a la aplicacion.")
+
+' =============================================
+' RELACIONES
+' =============================================
+Rel(usuario_admin, browser,        "Accede a la aplicacion a traves de")
+Rel(browser,       crud_utede,     "Envia peticiones HTTP GET/POST a", "HTTP/HTTPS")
+Rel(crud_utede,    servidor_email, "Almacena emails de estudiantes como referencia a", "No hay integracion directa actualmente")
+
+Rel_Back(browser,   crud_utede,    "Responde con paginas HTML", "HTTP/HTTPS")
+
+' =============================================
+' NOTAS
+' =============================================
+note right of crud_utede
+  Funcionalidades principales:
+  - Registro de usuarios con hash bcrypt
+  - Autenticacion por sesion PHP
+  - Registro de estudiantes
+  - Listado completo de estudiantes
+  - Edicion de datos de estudiantes
+end note
+
+@enduml

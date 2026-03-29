@@ -1,0 +1,103 @@
+@startuml C4_Codigo_UTEDE
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Code.puml
+
+LAYOUT_WITH_LEGEND()
+
+title Diagrama C4 - Nivel 4: Codigo\nFlujo de Edicion de Estudiante\nSistema CRUD UTEDE
+
+' ============================================================
+' NOTA: El nivel de codigo C4 documenta las clases/funciones
+' mas importantes de un componente critico.
+' Se documenta el componente EstudianteModel y su interaccion
+' con el controlador editar_estudiante.php
+' ============================================================
+
+' =============================================
+' CLASES / ELEMENTOS DE CODIGO
+' =============================================
+
+' --- Controlador ---
+CodeElement(ctrl_editar, "editar_estudiante.php", "Controlador PHP", "Punto de entrada HTTP. Coordina el flujo completo de busqueda y actualizacion de un estudiante.")
+
+' --- Includes transversales ---
+CodeElement(fn_verificarSesion,    "verificarSesion()",    "Funcion - auth.php",      "Comprueba $_SESSION['id_usuario']. Redirige a login si no existe sesion activa.")
+CodeElement(fn_sanitizarTexto,     "sanitizarTexto()",     "Funcion - sanitizar.php", "Aplica trim() + strip_tags() + htmlspecialchars() a una cadena de texto.")
+CodeElement(fn_sanitizarEmail,     "sanitizarEmail()",     "Funcion - sanitizar.php", "Aplica trim() + FILTER_SANITIZE_EMAIL a un email.")
+CodeElement(fn_sanitizarEntero,    "sanitizarEntero()",    "Funcion - sanitizar.php", "Convierte el valor a entero seguro con (int) + FILTER_SANITIZE_NUMBER_INT.")
+CodeElement(fn_validarRequerido,   "validarRequerido()",   "Funcion - validar.php",   "Retorna mensaje de error si el campo esta vacio, null si es valido.")
+CodeElement(fn_validarLongitud,    "validarLongitud()",    "Funcion - validar.php",   "Retorna mensaje de error si la longitud esta fuera del rango [min, max].")
+CodeElement(fn_validarSoloTexto,   "validarSoloTexto()",   "Funcion - validar.php",   "Valida que el campo solo contenga letras Unicode, espacios y guiones.")
+CodeElement(fn_validarEmail,       "validarEmail()",       "Funcion - validar.php",   "Valida formato de email con FILTER_VALIDATE_EMAIL.")
+CodeElement(fn_recopilarErrores,   "recopilarErrores()",   "Funcion - validar.php",   "Filtra array de resultados de validacion, retorna solo los errores (no null).")
+
+' --- Clase EstudianteModel ---
+CodeElement(em_construct,           "EstudianteModel::__construct()", "Metodo - EstudianteModel", "Obtiene la instancia PDO singleton llamando a obtenerConexion().")
+CodeElement(em_buscarPorId,         "buscarPorId(int id)",            "Metodo - EstudianteModel", "SELECT con prepare/execute por :id. Retorna array o false.")
+CodeElement(em_existeIdentificacion,"existeIdentificacion(str, ?int)","Metodo - EstudianteModel", "SELECT COUNT(*) WHERE identificacion=:id AND id_estudiante!=:excluir. Retorna bool.")
+CodeElement(em_existeEmail,         "existeEmail(str, ?int)",         "Metodo - EstudianteModel", "SELECT COUNT(*) WHERE email=:email AND id_estudiante!=:excluir. Retorna bool.")
+CodeElement(em_actualizar,          "actualizar(int, str, str, str, str)", "Metodo - EstudianteModel", "UPDATE estudiantes SET ... WHERE id_estudiante=:id. Usa prepare/execute con todos los campos.")
+
+' --- Configuracion PDO ---
+CodeElement(fn_obtenerConexion, "obtenerConexion()", "Funcion - database.php", "Singleton PDO con ERRMODE_EXCEPTION, FETCH_ASSOC, EMULATE_PREPARES=false.")
+
+' --- Vista ---
+CodeElement(form_editar, "form_editar_estudiante.php", "Vista HTML parcial", "Renderiza el formulario de edicion con valores actuales. Incluye campo oculto id_estudiante.")
+
+' =============================================
+' FLUJO DE EJECUCION (GET - Cargar formulario)
+' =============================================
+Rel(ctrl_editar, fn_verificarSesion,  "1. Verifica sesion activa")
+Rel(ctrl_editar, fn_sanitizarEntero,  "2. Sanitiza id del GET")
+Rel(ctrl_editar, em_construct,        "3. Instancia EstudianteModel")
+Rel(em_construct, fn_obtenerConexion, "3a. Obtiene conexion PDO")
+Rel(ctrl_editar, em_buscarPorId,      "4. Busca estudiante por ID")
+Rel(ctrl_editar, form_editar,         "5. Muestra formulario con datos")
+
+' =============================================
+' FLUJO DE EJECUCION (POST - Procesar cambios)
+' =============================================
+Rel(ctrl_editar, fn_sanitizarTexto,      "6. Sanitiza: identificacion, apellidos, nombre")
+Rel(ctrl_editar, fn_sanitizarEmail,      "6b. Sanitiza: email")
+Rel(ctrl_editar, fn_recopilarErrores,    "7. Recopila errores de validacion")
+Rel(fn_recopilarErrores, fn_validarRequerido,   "7a. valida requerido")
+Rel(fn_recopilarErrores, fn_validarLongitud,    "7b. valida longitud")
+Rel(fn_recopilarErrores, fn_validarSoloTexto,   "7c. valida solo texto")
+Rel(fn_recopilarErrores, fn_validarEmail,       "7d. valida email")
+Rel(ctrl_editar, em_existeIdentificacion, "8. Verifica unicidad identificacion (excluye ID propio)")
+Rel(ctrl_editar, em_existeEmail,          "9. Verifica unicidad email (excluye ID propio)")
+Rel(ctrl_editar, em_actualizar,           "10. Actualiza si no hay errores")
+Rel(em_actualizar, fn_obtenerConexion,    "10a. Usa PDO singleton")
+
+' =============================================
+' NOTAS DE CODIGO
+' =============================================
+note right of em_actualizar
+  SQL:
+  UPDATE estudiantes
+     SET identificacion = :identificacion,
+         apellidos      = :apellidos,
+         nombre         = :nombre,
+         email          = :email
+   WHERE id_estudiante  = :id
+  Todos los valores son parametros
+  preparados, nunca concatenados.
+end note
+
+note right of em_existeIdentificacion
+  Patron de exclusion en UPDATE:
+  WHERE identificacion = :identificacion
+    AND id_estudiante != :excluirId
+  Evita falso positivo de duplicacion
+  cuando el registro se edita a si mismo.
+end note
+
+note bottom of ctrl_editar
+  Manejo de excepciones:
+  - RuntimeException: error de conexion BD
+  - Exception generica: cualquier otro error
+  Los detalles van a error_log(), no al usuario.
+  Se verifica que id del POST == id de la URL
+  antes de ejecutar la actualizacion.
+end note
+
+@enduml

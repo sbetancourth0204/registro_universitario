@@ -1,0 +1,103 @@
+@startuml C4_Componente_UTEDE
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+LAYOUT_WITH_LEGEND()
+
+title Diagrama C4 - Nivel 3: Componentes de la Aplicacion Web PHP\nSistema CRUD UTEDE - Gestion de Estudiantes
+
+' =============================================
+' ACTORES EXTERNOS
+' =============================================
+Person(usuario_admin, "Usuario Administrativo", "Usuario autenticado de la universidad.")
+ContainerDb(bd, "Base de Datos MySQL", "Tablas: usuarios, estudiantes")
+Container(sesiones, "Sesiones PHP", "Archivos de sesion en disco")
+
+' =============================================
+' COMPONENTES INTERNOS DE LA APLICACION WEB
+' =============================================
+Container_Boundary(web_app, "Aplicacion Web PHP") {
+
+    ' --- CONFIGURACION ---
+    Component(db_config, "database.php", "config/\nFuncion PHP global", "Singleton PDO. Configura la conexion a MySQL con ERRMODE_EXCEPTION, FETCH_ASSOC y EMULATE_PREPARES=false.")
+
+    ' --- INCLUDES TRANSVERSALES ---
+    Component(auth,      "auth.php",      "includes/\nFunciones PHP", "Gestion de sesion: verificarSesion(), iniciarSesionUsuario(), cerrarSesion(). Previene acceso no autorizado y session fixation.")
+    Component(sanitizar, "sanitizar.php", "includes/\nFunciones PHP", "Sanitiza entradas: sanitizarTexto(), sanitizarEmail(), sanitizarEntero(). Aplica strip_tags, htmlspecialchars, FILTER_SANITIZE_*.")
+    Component(validar,   "validar.php",   "includes/\nFunciones PHP", "Valida reglas de negocio: requerido, longitud, soloTexto, email, alfanumerico, contrasena. Retorna mensajes de error o null.")
+
+    ' --- MODELOS ---
+    Component(usuario_model,    "UsuarioModel.php",    "models/\nClase PHP", "Acceso PDO a tabla usuarios. Metodos: buscarPorUsuario(), existeIdentificacion(), existeUsuario(), registrar().")
+    Component(estudiante_model, "EstudianteModel.php", "models/\nClase PHP", "Acceso PDO a tabla estudiantes. Metodos: listarTodos(), buscarPorId(), existeIdentificacion(), existeEmail(), registrar(), actualizar().")
+
+    ' --- FORMULARIOS / VISTAS ---
+    Component(form_login,       "form_login.php",              "forms/\nHTML parcial", "Formulario de inicio de sesion. Campos: usuario, clave. Enlace a registro.")
+    Component(form_reg_usuario, "form_registro_usuario.php",   "forms/\nHTML parcial", "Formulario de registro de usuario. Campos: identificacion, apellidos, nombres, usuario, clave, confirmar clave.")
+    Component(form_estudiante,  "form_estudiante.php",         "forms/\nHTML parcial", "Formulario de registro de nuevo estudiante. Campos: identificacion, apellidos, nombre, email.")
+    Component(form_editar,      "form_editar_estudiante.php",  "forms/\nHTML parcial", "Formulario de edicion de estudiante. Repobla campos con datos actuales. Campo oculto id_estudiante.")
+
+    ' --- CONTROLADORES ---
+    Component(ctrl_login,      "login.php",                "Controlador\nPHP", "Procesa autenticacion. Sanitiza, valida, verifica credenciales con password_verify(), inicia sesion.")
+    Component(ctrl_registro,   "registro_usuario.php",     "Controlador\nPHP", "Procesa registro de usuarios. Sanitiza, valida, verifica unicidad, llama registrar() con hash bcrypt.")
+    Component(ctrl_index,      "index.php",                "Controlador\nPHP", "Panel principal. Requiere sesion. Lista todos los estudiantes. Muestra buscador por ID.")
+    Component(ctrl_registrar,  "registrar_estudiante.php", "Controlador\nPHP", "Procesa alta de estudiante. Sanitiza, valida, verifica unicidad de identificacion y email, registra.")
+    Component(ctrl_editar,     "editar_estudiante.php",    "Controlador\nPHP", "Procesa busqueda y edicion de estudiante por ID. Sanitiza, valida, verifica unicidad excluyendo propio ID, actualiza.")
+    Component(ctrl_logout,     "logout.php",               "Controlador\nPHP", "Cierra sesion completamente y redirige a login.")
+}
+
+' =============================================
+' RELACIONES: Usuario -> Controladores
+' =============================================
+Rel(usuario_admin, ctrl_login,     "POST usuario, clave",     "HTTP")
+Rel(usuario_admin, ctrl_registro,  "POST datos de usuario",   "HTTP")
+Rel(usuario_admin, ctrl_index,     "GET listado",             "HTTP")
+Rel(usuario_admin, ctrl_registrar, "POST datos estudiante",   "HTTP")
+Rel(usuario_admin, ctrl_editar,    "GET id / POST cambios",   "HTTP")
+Rel(usuario_admin, ctrl_logout,    "GET cerrar sesion",       "HTTP")
+
+' =============================================
+' RELACIONES: Controladores -> Includes
+' =============================================
+Rel(ctrl_login,     sanitizar, "sanitizarTexto()")
+Rel(ctrl_login,     validar,   "validarRequerido()")
+Rel(ctrl_login,     auth,      "iniciarSesionUsuario()")
+Rel(ctrl_registro,  sanitizar, "sanitizarTexto()")
+Rel(ctrl_registro,  validar,   "validar*()")
+Rel(ctrl_index,     auth,      "verificarSesion()")
+Rel(ctrl_registrar, sanitizar, "sanitizarTexto(), sanitizarEmail()")
+Rel(ctrl_registrar, validar,   "validar*()")
+Rel(ctrl_registrar, auth,      "verificarSesion()")
+Rel(ctrl_editar,    sanitizar, "sanitizarTexto(), sanitizarEntero()")
+Rel(ctrl_editar,    validar,   "validar*()")
+Rel(ctrl_editar,    auth,      "verificarSesion()")
+Rel(ctrl_logout,    auth,      "cerrarSesion()")
+
+' =============================================
+' RELACIONES: Controladores -> Modelos
+' =============================================
+Rel(ctrl_login,     usuario_model,    "buscarPorUsuario()")
+Rel(ctrl_registro,  usuario_model,    "existeIdentificacion(), existeUsuario(), registrar()")
+Rel(ctrl_index,     estudiante_model, "listarTodos()")
+Rel(ctrl_registrar, estudiante_model, "existeIdentificacion(), existeEmail(), registrar()")
+Rel(ctrl_editar,    estudiante_model, "buscarPorId(), existeIdentificacion(), existeEmail(), actualizar()")
+
+' =============================================
+' RELACIONES: Controladores -> Formularios
+' =============================================
+Rel(ctrl_login,     form_login,       "include form")
+Rel(ctrl_registro,  form_reg_usuario, "include form")
+Rel(ctrl_registrar, form_estudiante,  "include form")
+Rel(ctrl_editar,    form_editar,      "include form")
+
+' =============================================
+' RELACIONES: Modelos -> BD y Config
+' =============================================
+Rel(usuario_model,    db_config, "obtenerConexion()")
+Rel(estudiante_model, db_config, "obtenerConexion()")
+Rel(db_config,        bd,        "Conexion PDO", "TCP 3306")
+
+' =============================================
+' RELACIONES: Auth -> Sesion
+' =============================================
+Rel(auth, sesiones, "session_start(), session_regenerate_id(), session_destroy()", "PHP IO")
+
+@enduml
