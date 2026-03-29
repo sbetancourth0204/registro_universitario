@@ -1,0 +1,330 @@
+==============================================================
+  CODE REVIEW - SISTEMA CRUD UTEDE
+  Aplicacion: Gestion de Estudiantes - Universidad UTEDE
+  Lenguaje:   PHP 8.x + MySQL / MariaDB
+  Fecha:      2026-03-28
+  Revisor:    Analisis automatizado de arquitectura y seguridad
+==============================================================
+
+
+--------------------------------------------------------------
+1. RESUMEN EJECUTIVO
+--------------------------------------------------------------
+El proyecto implementa un CRUD de estudiantes con autenticacion
+de usuarios para la Universidad UTEDE. La arquitectura sigue un
+patron MVC simplificado (sin framework): controladores en la
+raiz, modelos en /models, vistas parciales en /forms e
+incluidos de logica transversal en /includes.
+
+El codigo presenta un nivel de seguridad BUENO para una
+aplicacion academica PHP procedimental, con uso correcto de
+PDO, hashing bcrypt y separacion de responsabilidades.
+Se identifican oportunidades de mejora en robustez, trazabilidad
+y defensa en profundidad que se detallan a continuacion.
+
+
+--------------------------------------------------------------
+2. FORTALEZAS ENCONTRADAS
+--------------------------------------------------------------
+
+2.1 Prevencion de inyeccion SQL
+    - Todos los modelos usan PDO::prepare() + execute() con
+      parametros nombrados (:param). Correcto.
+    - PDO::ATTR_EMULATE_PREPARES => false garantiza sentencias
+      reales en el servidor MySQL, no emuladas por PHP.
+    - La funcion obtenerConexion() es singleton, evitando
+      multiples conexiones por request.
+
+2.2 Manejo de contrasenas
+    - Se usa password_hash($clave, PASSWORD_BCRYPT, ['cost'=>12]).
+      El cost 12 es adecuado: equilibrio seguridad/rendimiento.
+    - password_verify() se invoca correctamente para comparacion.
+    - La clave en texto plano NUNCA se registra en logs.
+
+2.3 Sanitizacion de entradas
+    - sanitizarTexto() aplica trim + strip_tags + htmlspecialchars
+      antes de cualquier procesamiento. Correcto orden.
+    - sanitizarEmail() usa FILTER_SANITIZE_EMAIL de PHP.
+    - sanitizarEntero() convierte IDs con (int) cast, eliminando
+      inyecciones en parametros numericos.
+
+2.4 Proteccion XSS en salida
+    - Toda variable impresa en HTML usa htmlspecialchars()
+      con ENT_QUOTES | ENT_SUBSTITUTE y charset UTF-8. Correcto.
+    - Los IDs numericos se castean a (int) antes de imprimir.
+
+2.5 Gestion de sesion
+    - session_regenerate_id(true) al iniciar sesion previene
+      session fixation. Correcto.
+    - cerrarSesion() limpia $_SESSION, destruye la cookie
+      y llama session_destroy(). Implementacion completa.
+    - verificarSesion() redirige al login si no hay sesion activa
+      y se invoca al inicio de cada pagina protegida.
+
+2.6 Manejo de excepciones
+    - try/catch en todos los controladores captura RuntimeException
+      (BD) y Exception generica.
+    - Los mensajes de error internos van a error_log(), no al
+      usuario. Evita exponer rutas y detalles del servidor.
+
+2.7 Separacion de responsabilidades
+    - config/   -> configuracion de conexion
+    - includes/ -> logica transversal (auth, sanitizar, validar)
+    - models/   -> acceso a datos (PDO)
+    - forms/    -> presentacion (HTML puro)
+    - *.php     -> controladores (coordinacion)
+    Esta separacion facilita mantenimiento y pruebas unitarias.
+
+2.8 Validacion de unicidad con exclusion
+    - existeIdentificacion() y existeEmail() en EstudianteModel
+      aceptan $excluirId para ignorar el propio registro al editar.
+      Evita falsos positivos de duplicacion. Correcto.
+
+2.9 Integridad del formulario de edicion
+    - Se verifica que el id_estudiante del POST coincida con el
+      id de la URL antes de procesar la actualizacion.
+
+2.10 Colacion de base de datos
+    - utf8mb4 / utf8mb4_unicode_ci soporta caracteres Unicode
+      completos (emojis, tildes, caracteres especiales).
+
+
+--------------------------------------------------------------
+3. HALLAZGOS Y RECOMENDACIONES
+--------------------------------------------------------------
+
+SEVERIDAD: ALTA
+---------------
+
+3.1 Credenciales en codigo fuente (config/database.php)
+    Situacion:
+        define('DB_USER', 'root');
+        define('DB_PASS', '');
+    Problema:
+        Las credenciales de BD estan hardcodeadas. Si el
+        repositorio se sube a git, quedan expuestas.
+    Recomendacion:
+        Usar variables de entorno o un archivo .env excluido
+        del control de versiones:
+
+        // Ejemplo con $_ENV
+        define('DB_USER', $_ENV['DB_USER'] ?? 'root');
+        define('DB_PASS', $_ENV['DB_PASS'] ?? '');
+
+        Agregar config/database.php al .gitignore o usar
+        un archivo config/database.example.php como plantilla.
+
+3.2 Sin proteccion CSRF en formularios POST
+    Situacion:
+        Ningun formulario incluye token CSRF.
+    Problema:
+        Un atacante podria crear una pagina maliciosa que envie
+        un formulario POST a registrar_estudiante.php o
+        editar_estudiante.php en nombre del usuario autenticado
+        (Cross-Site Request Forgery).
+    Recomendacion:
+        Generar un token en sesion al mostrar cada formulario y
+        verificarlo al procesar el POST:
+
+        // Al mostrar el formulario
+        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+        echo '<input type="hidden" name="csrf_token"
+               value="' . $_SESSION['csrf_token'] . '">';
+
+        // Al procesar el POST
+        if (!hash_equals($_SESSION['csrf_token'],
+                         $_POST['csrf_token'] ?? '')) {
+            die('Token CSRF invalido.');
+        }
+
+3.3 Ausencia de limite de intentos de login (Brute Force)
+    Situacion:
+        login.php no limita intentos fallidos.
+    Problema:
+        Un atacante puede probar contrasenas indefinidamente
+        contra cualquier usuario conocido.
+    Recomendacion:
+        Registrar intentos fallidos por IP o por usuario en BD
+        o en sesion, y bloquear temporalmente tras N intentos.
+        Alternativamente, agregar un retardo con sleep(2) tras
+        cada fallo para ralentizar ataques automatizados.
+
+
+SEVERIDAD: MEDIA
+----------------
+
+3.4 Doble sanitizacion (sanitizarTexto aplicada antes de validar)
+    Situacion:
+        sanitizarTexto() aplica htmlspecialchars() que convierte
+        "O'Brien" en "O&#039;Brien". Luego validarSoloTexto()
+        evalua la cadena ya codificada.
+    Problema:
+        Los datos almacenados en BD tendrian entidades HTML
+        (&amp;, &#039;) en lugar del texto real. Esto puede
+        causar problemas al exportar datos o usarlos en
+        contextos no-HTML (PDF, JSON API, emails).
+    Recomendacion:
+        Separar la sanitizacion de almacenamiento (trim +
+        strip_tags) de la codificacion de salida (htmlspecialchars).
+        Aplicar htmlspecialchars SOLO al imprimir en HTML,
+        no antes de guardar en BD:
+
+        // Para almacenamiento
+        function limpiarTexto(string $v): string {
+            return strip_tags(trim($v));
+        }
+
+        // Solo al imprimir
+        echo htmlspecialchars($valor, ENT_QUOTES, 'UTF-8');
+
+3.5 Sin cabeceras de seguridad HTTP
+    Situacion:
+        No se emiten cabeceras de seguridad en ningun controlador.
+    Problema:
+        Vulnerabilidades de clickjacking, MIME sniffing y otros.
+    Recomendacion:
+        Agregar en database.php o en un archivo bootstrap:
+
+        header('X-Frame-Options: DENY');
+        header('X-Content-Type-Options: nosniff');
+        header('Referrer-Policy: strict-origin-when-cross-origin');
+        header("Content-Security-Policy: default-src 'self'");
+
+3.6 Sin paginacion en listado de estudiantes
+    Situacion:
+        listarTodos() trae todos los registros sin LIMIT.
+    Problema:
+        Con miles de estudiantes, la consulta puede ser lenta
+        y la pagina pesada para el navegador.
+    Recomendacion:
+        Implementar paginacion con LIMIT y OFFSET en la consulta
+        y parametros ?pagina=N en la URL.
+
+3.7 Mensaje de feedback por GET (URL)
+    Situacion:
+        header('Location: index.php?mensaje=registrado');
+    Problema:
+        El mensaje queda en la URL y puede ser bookmarkeado o
+        compartido, mostrando el aviso fuera de contexto.
+        Ademas es vulnerable a manipulacion manual del parametro.
+    Recomendacion:
+        Usar el patron PRG (Post/Redirect/Get) con mensajes en
+        sesion en lugar de parametros GET:
+
+        $_SESSION['flash'] = 'Estudiante registrado exitosamente.';
+        header('Location: index.php');
+        // En index.php
+        if (!empty($_SESSION['flash'])) {
+            echo htmlspecialchars($_SESSION['flash'], ENT_QUOTES, 'UTF-8');
+            unset($_SESSION['flash']);
+        }
+
+3.8 Sin archivo .htaccess para proteger directorios
+    Situacion:
+        Las carpetas /includes, /models, /config y /forms
+        son accesibles directamente por URL.
+    Problema:
+        Un visitante puede llamar directamente a
+        http://servidor/utede/config/database.php y ver una
+        pagina en blanco o mensajes de error con rutas del servidor.
+    Recomendacion:
+        Agregar /includes/.htaccess, /models/.htaccess, etc.:
+
+        # .htaccess en cada directorio interno
+        Deny from all
+
+        O mover todos los archivos fuera del document root
+        y dejar solo los controladores publicos en la raiz.
+
+
+SEVERIDAD: BAJA / MEJORA
+-------------------------
+
+3.9 obtenerConexion() usa variable estatica en funcion global
+    Situacion:
+        El singleton se implementa con static $pdo dentro
+        de una funcion global.
+    Problema:
+        En PHP, las variables estaticas de funciones globales
+        no se resetean entre tests unitarios sin hacks especiales.
+    Recomendacion:
+        Encapsular la conexion en una clase estatica o usar
+        inyeccion de dependencias en los modelos para facilitar
+        pruebas (pasar el PDO como parametro al constructor).
+
+3.10 Ausencia de autoloader
+    Situacion:
+        Cada archivo usa require_once manualmente.
+    Problema:
+        En proyectos que crecen, mantener los require_once
+        se vuelve tedioso y propenso a errores.
+    Recomendacion:
+        Agregar Composer con autoload PSR-4, o implementar
+        un autoloader simple con spl_autoload_register().
+
+3.11 Sin archivo .gitignore
+    Situacion:
+        No se incluye .gitignore en el proyecto.
+    Recomendacion:
+        Crear un .gitignore que excluya al menos:
+        /vendor/
+        config/database.php
+        *.log
+        .env
+
+3.12 Falta sanitizacion de $mensaje en index.php
+    Situacion:
+        $mensaje = htmlspecialchars($_GET['mensaje'] ?? '', ENT_QUOTES, 'UTF-8');
+        Luego se compara con === 'registrado' y === 'actualizado'.
+    Observacion:
+        La comparacion estricta previene XSS correctamente.
+        Sin embargo, el parametro ?mensaje=cualquier_cosa es
+        ignorado silenciosamente sin ninguna validacion adicional.
+        No es un riesgo critico pero si una oportunidad de
+        refactorizar usando mensajes flash de sesion (ver 3.7).
+
+3.13 Tipo de retorno de registrar() en modelos no verificado
+    Situacion:
+        registrar() retorna bool pero los controladores no
+        verifican el valor de retorno.
+    Recomendacion:
+        if (!$modelo->registrar(...)) {
+            $errores[] = 'No se pudo guardar el registro. Intente de nuevo.';
+        }
+
+
+--------------------------------------------------------------
+4. METRICAS GENERALES
+--------------------------------------------------------------
+
+  Total de archivos PHP:          16
+  Total de lineas de codigo:   1,312
+  Archivos con manejo de excepciones: 5 / 5 controladores (100%)
+  Consultas SQL con prepare():    9 / 9 (100%)
+  Salidas HTML con htmlspecialchars(): cumplimiento alto
+  Formularios con token CSRF:     0 / 4 (0%) -- PENDIENTE
+  Cabeceras de seguridad HTTP:    0       -- PENDIENTE
+
+
+--------------------------------------------------------------
+5. CONCLUSION
+--------------------------------------------------------------
+
+El proyecto tiene una base solida de seguridad para un sistema
+academico PHP procedimental. Los aspectos criticos de inyeccion
+SQL, XSS, session fixation y hashing de contrasenas estan
+correctamente implementados.
+
+Las mejoras de mayor impacto en orden de prioridad son:
+
+  1. Implementar tokens CSRF en todos los formularios POST.
+  2. Agregar limite de intentos en el login.
+  3. Mover credenciales a variables de entorno.
+  4. Separar sanitizacion de almacenamiento de codificacion HTML.
+  5. Agregar cabeceras de seguridad HTTP.
+  6. Proteger directorios internos con .htaccess.
+  7. Implementar mensajes flash via sesion (patron PRG).
+
+==============================================================
+  FIN DEL CODE REVIEW
+==============================================================
